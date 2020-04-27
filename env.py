@@ -21,7 +21,7 @@ ACTIONS_RENDER_MAP = {
 }
 
 MAP_SIZE = np.array([10, 10])
-MAX_STEPS = 100
+MAX_STEPS = 50
 
 
 def distance(p1, p2):
@@ -113,49 +113,52 @@ class SimpleEnv(gym.Env):
         if action not in ACTIONS_MAP:
             raise AssertionError('invalid action')
 
-        action_name = ACTIONS_MAP[action]
-
-        self.last_action = action
-        self.state.move_player(action_name.upper())
         self.state.steps += 1
+        self.state.last_action = action
+
+        action_name = ACTIONS_MAP[action]
+        self.state.move_player(action_name.upper())
 
         reward = 0.
         if action_name != 'stay':
             new_distance = distance(
                 self.state.player_position, self.state.target_position)
-            # delta = (MAX_DISTANCE - new_distance) / MAX_DISTANCE
-            # if self.last_distance <= new_distance:
-            #     delta = -delta
-            reward += (self.last_distance - new_distance) / 2
-            if reward < 0:
-                reward *= 1.5
+            delta = self.last_distance - new_distance
+            if delta < 0 and np.abs(delta) < 1:
+                reward -= 0.25
+            elif delta < 0:
+                reward -= 0.5
+            elif delta > 0 and delta < 1:
+                reward += 0.25
+            else:
+                reward += 0.5
             self.last_distance = new_distance
 
-        # too_long = self.state.steps > MAX_STEPS
-        # if too_long:
-        #     reward += -1.
-        too_long = False
+        too_long = self.state.steps > MAX_STEPS
+        if too_long:
+            reward -= 1.
+        # too_long = False
 
-        on_target = np.array_equal(
-            self.state.player_position, self.state.target_position)
+        on_target = self.state.is_player_on_target()
         if on_target:
-            reward += 1.
+            reward += 0.5
 
         mw, mh = self.state.map_size
         px, py = self.state.player_position
         out_of_map = px < 0 or px >= mw or py < 0 or py >= mh
         if out_of_map:
-            reward += -1.
+            reward -= 0.5
 
         done = out_of_map or on_target or too_long
 
-        reward /= 2.
-        self.last_reward = reward
+        self.state.last_reward = reward
 
         return self.state, reward, done, {}
 
     def reset(self):
         self.state = State()
+        self.last_distance = distance(
+            self.state.player_position, self.state.target_position)
         return self.state
 
     def render(self, scr, mode='human'):
