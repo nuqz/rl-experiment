@@ -12,6 +12,13 @@ WEST = np.array([-1, 0])
 
 ACTIONS = ['stay', 'north', 'east', 'south', 'west']
 ACTIONS_MAP = dict(enumerate(ACTIONS))
+ACTIONS_RENDER_MAP = {
+    0: ord('*'),
+    1: ord('^'),
+    2: ord('>'),
+    3: ord('v'),
+    4: ord('<'),
+}
 
 MAP_SIZE = np.array([10, 10])
 MAX_STEPS = 100
@@ -27,23 +34,72 @@ MAX_DISTANCE = distance(ZERO, MAP_SIZE-1)
 
 class State:
     def __init__(self, map_size=MAP_SIZE):
-        self.steps = 0
-
+        self.steps = self.last_action = self.last_reward = 0
         width, height = self.map_size = map_size
-        # self.map_size = map_size
 
-        self.target_position = np.random.randint(0, width, 2)
-        self.player_position = np.random.randint(0, width, 2)
+        self.map = self._generate_map()
 
-        self.map = self._generate_map(map_size)
+        self._map_win_width, self._map_win_height = self.map_size + 2
+        self._map_win_xlim, self._map_win_ylim = self.map_size + 1
 
-    def _generate_map(self, size=MAP_SIZE):
-        gmap = np.zeros(size)
+        inner_width = self._map_win_width - 2
+        self._map_win_horizontal_border = '+' + ('-' * inner_width) + '+'
+        self._map_win_horizontal_filler = '|' + ('.' * inner_width) + '|'
+
+        lowest_dim = width if width < height else height
+        self.target_position = np.random.randint(0, lowest_dim, 2)
+        self.player_position = np.random.randint(0, lowest_dim, 2)
+        self._update_positions()
+
+    def _update_positions(self):
+        self._tx, self._ty = self.target_position + 1
+        self._px, self._py = self.player_position + 1
+
+    def _generate_map(self):
+        gmap = np.zeros(self.map_size)
         return gmap
 
     def move_player(self, direction_name):
         direction = getattr(sys.modules[__name__], direction_name)
         self.player_position += direction
+
+    def is_player_on_target(self):
+        return np.array_equal(self.player_position, self.target_position)
+
+    def render(self):
+        self._update_positions()
+
+        map_win = self._render_map()
+        self._render_player(map_win)
+        self._render_target(map_win)
+
+        return map_win
+
+    def _render_map(self):
+        map_win = curses.newwin(self._map_win_height,
+                                self._map_win_width+1, 1, 0)
+        for y in range(0, self._map_win_height):
+            s = self._map_win_horizontal_filler
+            if y == 0 or y == self._map_win_ylim:
+                s = self._map_win_horizontal_border
+            map_win.addstr(y, 0, s)
+
+        return map_win
+
+    def _is_player_within_window(self):
+        return (self._px >= 0 and self._py >= 0 and
+                self._px <= self._map_win_xlim and self._py <= self._map_win_ylim)
+
+    def _render_player(self, map_win):
+        if self._is_player_within_window():
+            map_win.addch(self._py, self._px,
+                          ACTIONS_RENDER_MAP[self.last_action])
+
+    def _render_target(self, map_win):
+        ch = ord('O')
+        if self.is_player_on_target():
+            ch = ord('X')
+        map_win.addch(self._ty, self._tx, ch)
 
 
 class SimpleEnv(gym.Env):
@@ -51,7 +107,7 @@ class SimpleEnv(gym.Env):
     def __init__(self):
         super().__init__()
         self.action_space = gym.spaces.Discrete(len(ACTIONS))
-        self.last_action = self.last_reward = self.last_distance = 0
+        self.last_distance = 0
 
     def step(self, action):
         if action not in ACTIONS_MAP:
@@ -99,51 +155,20 @@ class SimpleEnv(gym.Env):
         return self.state, reward, done, {}
 
     def reset(self):
-        self.last_action = self.last_reward = 0
         self.state = State()
         return self.state
 
     def render(self, scr, mode='human'):
         scr.clear()
         scr.addstr(
-            'Step: #{step:03d} / Last reward: {reward:01.2f} / Last action: {action}'.format(
+            'Step: #{step:03d} / Last reward: {reward:+01.2f} / Last distance: {distance:01.2f}'.format(
                 step=self.state.steps,
-                reward=self.last_reward,
-                action=ACTIONS_MAP[self.last_action]))
-
-        width, height = self.state.map_size
-        width += 2
-        height += 2
-        xlim, ylim = width - 1, height - 1
-
-        gmap = curses.newwin(height, width, 1, 1)
-
-        for x in range(0, xlim):
-            gmap.addch(0, x, ord('-'))
-            gmap.addch(ylim, x, ord('-'))
-
-        for y in range(0, ylim):
-            gmap.addch(y, 0, ord('|'))
-            gmap.addch(y, xlim,  ord('|'))
-
-        for x in range(0, xlim):
-            for y in range(0, ylim):
-                if x != 0 and x != xlim and y != 0 and y != ylim:
-                    gmap.addch(y, x, ord('.'))
-
-        px, py = self.state.player_position + 1
-        if px >= 0 and py >= 0 and px < xlim and py < ylim:
-            gmap.addch(py, px, ord('*'))
-
-        tx, ty = self.state.target_position + 1
-        ch = ord('O')
-        if tx == px and ty == py:
-            ch = ord('X')
-        gmap.addch(ty, tx, ch)
-
-        scr.addstr(13, 0, 'Player @ [{x}, {y}]'.format(x=px-1, y=py-1))
+                reward=self.state.last_reward,
+                distance=self.last_distance))
         scr.refresh()
-        gmap.refresh()
+
+        map_win = self.state.render()
+        map_win.refresh()
 
     def close(self):
         pass
